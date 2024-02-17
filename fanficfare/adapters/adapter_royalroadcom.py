@@ -60,6 +60,9 @@ class RoyalRoadAdapter(BaseSiteAdapter):
         # RR has globally unique ID for each chapter which can be used for fast lookup
         self.chapterURLIndex = {}
 
+        if self.getConfig('username') and self.getConfig('password'):
+            self.login(self.getConfig("username"), self.getConfig("password"))
+
     def make_date(self, parenttag):
         # locale dates differ but the timestamp is easily converted
         timetag = parenttag.find('time')
@@ -119,7 +122,27 @@ class RoyalRoadAdapter(BaseSiteAdapter):
                 return self.chapterUrls[chapter_url_index]['url']
         return url
 
+    def login(self, username, password):
+        loginUrl = 'https://' + self.getSiteDomain() + '/account/login'
+        params = {}
+        params['Email'] = username
+        params['Password'] = password
+        
+        logger.info("Will now login to URL (%s) as (%s)" % (loginUrl,
+                                                            params['Email']))
+        
+        data = self.get_request(loginUrl)
+        soup = self.make_soup(data)
 
+        token = soup.find('input', {'name': '__RequestVerificationToken'})['value']
+
+        d = self.post_request(loginUrl, params)
+
+        soup = self.make_soup(d)
+        username = soup.find("span", { "class": "username"})
+        if not username.text:
+            logger.warning("could not login")
+        # logger.warning("logged in as %s", username.text)
 		
     def make_soup(self, data):
         soup = super(RoyalRoadAdapter, self).make_soup(data)
@@ -164,6 +187,10 @@ class RoyalRoadAdapter(BaseSiteAdapter):
 
         soup = self.make_soup(data)
         # print data
+
+        username = soup.find("span", { "class": "username"})
+        if username:
+            logger.info("extracting chapter in as %s", username.text)
 
         # site has taken to presenting a *page* that says 404 while
         # still returning an HTTP 200 code.

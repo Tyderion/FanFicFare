@@ -124,7 +124,8 @@ class RoyalRoadAdapter(BaseSiteAdapter):
 
     def login(self, username, password):
         loginUrl = f'https://{self.getSiteDomain()}/account/login'
-        logger.info("Will now login to URL (%s) as (%s)" % (loginUrl,    username))
+        logger.info("Will now login to URL (%s) as (%s)" %
+                    (loginUrl, username))
 
         d = self.post_request(loginUrl, {
             'Email': username,
@@ -135,45 +136,49 @@ class RoyalRoadAdapter(BaseSiteAdapter):
         if not self.is_logged_in(soup):
             logger.warning("could not login")
 
-    def needs_login(self, soup = None):
-        if self.hasConfig('username') and self.hasConfig('password') and (soup is None or not self.is_logged_in(soup)):
+    def needs_login(self, soup=None):
+        if self.hasConfig('username') and self.hasConfig('password') and (
+                soup is None or not self.is_logged_in(soup)):
             return True
         return False
 
     def is_logged_in(self, soup):
-        username = soup.find("span", { "class": "username"})
+        username = soup.find("span", {"class": "username"})
         return not (username is None or not username.text)
-		
+
     def make_soup(self, data):
         soup = super(RoyalRoadAdapter, self).make_soup(data)
-    # Parse and store styles in a set
+        # Parse and store styles in a set
         self.styles_to_ignore = set()
         style_elements = soup.find_all('style')
         for style_element in style_elements:
-            class_matches = re.findall(r'\.(\S+)\s*\{[^\}]*display\s*:\s*none\s*;[^\}]*\}', style_element.string, flags=re.IGNORECASE)
+            class_matches = re.findall(
+                r'\.(\S+)\s*\{[^\}]*display\s*:\s*none\s*;[^\}]*\}',
+                style_element.string,
+                flags=re.IGNORECASE)
             if class_matches:
                 self.styles_to_ignore.update(class_matches)
                 del class_matches
         self.handle_spoilers(soup)
         return soup
 
-    def handle_spoilers(self,topsoup):
+    def handle_spoilers(self, topsoup):
         '''
         Modifies tag given as required to do spoiler changes.
         '''
         if self.getConfig('remove_spoilers'):
-            for div in topsoup.find_all('div',class_='spoiler'):
+            for div in topsoup.find_all('div', class_='spoiler'):
                 div.extract()
         elif self.getConfig('legend_spoilers'):
-            for div in topsoup.find_all('div',class_='spoiler'):
-                div.name='fieldset'
+            for div in topsoup.find_all('div', class_='spoiler'):
+                div.name = 'fieldset'
                 legend = topsoup.new_tag('legend')
-                smalltext = div.find('div',class_='smalltext')
+                smalltext = div.find('div', class_='smalltext')
                 if smalltext:
                     legend.string = stripHTML(smalltext)
                     smalltext.extract()
-                div.insert(0,legend)
-                for inner in div.find_all('div',class_='spoiler-inner'):
+                div.insert(0, legend)
+                for inner in div.find_all('div', class_='spoiler-inner'):
                     del inner['style']
                 #div.button.extract()
 
@@ -188,62 +193,72 @@ class RoyalRoadAdapter(BaseSiteAdapter):
         soup = self.make_soup(data)
         # print data
 
-        username = soup.find("span", { "class": "username"})
+        username = soup.find("span", {"class": "username"})
         if username:
             logger.info("extracting chapter in as %s", username.text)
 
         # site has taken to presenting a *page* that says 404 while
         # still returning an HTTP 200 code.
-        div404 = soup.find('div',{'class':'number'})
+        div404 = soup.find('div', {'class': 'number'})
         if div404 and stripHTML(div404) == '404':
             raise exceptions.StoryDoesNotExist(self.url)
 
         ## Title
         title = soup.select_one('.fic-header h1').text
-        self.story.setMetadata('title',title)
+        self.story.setMetadata('title', title)
 
         # Find authorid and URL from... author url.
-        mt_card_social = soup.find(None,{'class':'mt-card-social'})
+        mt_card_social = soup.find(None, {'class': 'mt-card-social'})
         author_link = mt_card_social('a')[-1]
         if author_link:
             authorId = author_link['href'].rsplit('/', 1)[1]
             self.story.setMetadata('authorId', authorId)
-            self.story.setMetadata('authorUrl','https://'+self.host+'/user/profile/'+authorId)
+            self.story.setMetadata(
+                'authorUrl',
+                'https://' + self.host + '/user/profile/' + authorId)
 
-        self.story.setMetadata('author',soup.find(attrs=dict(property="books:author"))['content'])
+        self.story.setMetadata(
+            'author',
+            soup.find(attrs=dict(property="books:author"))['content'])
 
-
-        chapters = soup.find('table',{'id':'chapters'}).find('tbody')
+        chapters = soup.find('table', {'id': 'chapters'}).find('tbody')
         tds = [tr.findAll('td') for tr in chapters.findAll('tr')]
 
         if not tds:
-            raise exceptions.FailedToDownload(
-                "Story has no chapters: %s" % url)
+            raise exceptions.FailedToDownload("Story has no chapters: %s" %
+                                              url)
 
         # Links in the RR ToC page are in the normalized long form, so match is simpler than in normalize_chapterurl()
         chap_pattern_long = r"https?://(?:www\.)?royalroadl?\.com/fiction/\d+/[^/]+/chapter/(\d+)/[^/]+/?$"
-        for chapter,date in tds:
+        for chapter, date in tds:
             chapterUrl = 'https://' + self.getSiteDomain() + chapter.a['href']
             chapterDate = self.make_date(date)
-            format = self.getConfig("datechapter_format", self.getConfig("datePublished_format", self.dateformat))
-            if self.add_chapter(chapter.text, chapterUrl, {'date': chapterDate.strftime(format)}):
+            format = self.getConfig(
+                "datechapter_format",
+                self.getConfig("datePublished_format", self.dateformat))
+            if self.add_chapter(chapter.text, chapterUrl,
+                                {'date': chapterDate.strftime(format)}):
                 match = re.match(chap_pattern_long, chapterUrl)
                 if match:
                     chapter_id = match.group(1)
-                    self.chapterURLIndex[chapter_id] = len(self.chapterUrls) - 1
+                    self.chapterURLIndex[chapter_id] = len(
+                        self.chapterUrls) - 1
 
         description = soup.select_one('div.description div.hidden-content')
-        self.setDescription(url,description)
+        self.setDescription(url, description)
 
         self.story.setMetadata('dateUpdated', self.make_date(tds[-1][1]))
         self.story.setMetadata('datePublished', self.make_date(tds[0][1]))
 
-        for a in soup.find_all('a',{'class':'fiction-tag'}): # not all stories have genre
+        for a in soup.find_all(
+                'a', {'class': 'fiction-tag'}):  # not all stories have genre
             genre = stripHTML(a)
             if not "Unspecified" in genre:
-                self.story.addToList('genre',genre)
+                self.story.addToList('genre', genre)
 
-        for label in [stripHTML(a) for a in soup.find_all('span', {'class':'label'})]:
+        for label in [
+                stripHTML(a) for a in soup.find_all('span', {'class': 'label'})
+        ]:
             if 'COMPLETED' == label:
                 self.story.setMetadata('status', 'Completed')
             elif 'ONGOING' == label:
@@ -261,23 +276,26 @@ class RoyalRoadAdapter(BaseSiteAdapter):
 
         # 'rating' in FFF speak means G, PG, Teen, Restricted, etc.
         # 'stars' is used instead for RR's 1-5 stars rating.
-        stars=soup.find(attrs=dict(property="books:rating:value"))['content']
-        self.story.setMetadata('stars',stars)
-        logger.debug("stars:(%s)"%self.story.getMetadata('stars'))
+        stars = soup.find(attrs=dict(property="books:rating:value"))['content']
+        self.story.setMetadata('stars', stars)
+        logger.debug("stars:(%s)" % self.story.getMetadata('stars'))
 
-        warning = soup.find('strong',string='Warning')
+        warning = soup.find('strong', string='Warning')
         if warning != None:
             for li in warning.find_next('ul').find_all('li'):
-                self.story.addToList('warnings',stripHTML(li))
+                self.story.addToList('warnings', stripHTML(li))
 
         # get cover
-        img = soup.find(None,{'class':'row fic-header'}).find('img')
+        img = soup.find(None, {'class': 'row fic-header'}).find('img')
         if img:
             cover_url = img['src']
             # usually URL is for thumbnail. Try expected URL for larger image, if fails fall back to the original URL
-            if self.setCoverImage(url,cover_url.replace('/covers-full/', '/covers-large/'))[0] == "failedtoload":
-                self.setCoverImage(url,cover_url)
-                    # some content is show as tables, this will preserve them
+            if self.setCoverImage(
+                    url,
+                    cover_url.replace('/covers-full/',
+                                      '/covers-large/'))[0] == "failedtoload":
+                self.setCoverImage(url, cover_url)
+                # some content is show as tables, this will preserve them
 
         itag = soup.find('i',title='Story Length')
         if itag and itag.has_attr('data-content'):

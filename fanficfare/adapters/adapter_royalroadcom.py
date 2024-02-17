@@ -60,7 +60,7 @@ class RoyalRoadAdapter(BaseSiteAdapter):
         # RR has globally unique ID for each chapter which can be used for fast lookup
         self.chapterURLIndex = {}
 
-        if self.getConfig('username') and self.getConfig('password'):
+        if self.needs_login():
             self.login(self.getConfig("username"), self.getConfig("password"))
 
     def make_date(self, parenttag):
@@ -123,26 +123,26 @@ class RoyalRoadAdapter(BaseSiteAdapter):
         return url
 
     def login(self, username, password):
-        loginUrl = 'https://' + self.getSiteDomain() + '/account/login'
-        params = {}
-        params['Email'] = username
-        params['Password'] = password
-        
-        logger.info("Will now login to URL (%s) as (%s)" % (loginUrl,
-                                                            params['Email']))
-        
-        data = self.get_request(loginUrl)
-        soup = self.make_soup(data)
+        loginUrl = f'https://{self.getSiteDomain()}/account/login'
+        logger.info("Will now login to URL (%s) as (%s)" % (loginUrl,    username))
 
-        token = soup.find('input', {'name': '__RequestVerificationToken'})['value']
-
-        d = self.post_request(loginUrl, params)
+        d = self.post_request(loginUrl, {
+            'Email': username,
+            'Password': password,
+        })
 
         soup = self.make_soup(d)
-        username = soup.find("span", { "class": "username"})
-        if not username.text:
+        if not self.is_logged_in(soup):
             logger.warning("could not login")
-        # logger.warning("logged in as %s", username.text)
+
+    def needs_login(self, soup = None):
+        if self.hasConfig('username') and self.hasConfig('password') and (soup is None or not self.is_logged_in(soup)):
+            return True
+        return False
+
+    def is_logged_in(self, soup):
+        username = soup.find("span", { "class": "username"})
+        return not (username is None or not username.text)
 		
     def make_soup(self, data):
         soup = super(RoyalRoadAdapter, self).make_soup(data)
@@ -181,7 +181,7 @@ class RoyalRoadAdapter(BaseSiteAdapter):
     def extractChapterUrlsAndMetadata(self):
 
         url = self.url
-        logger.debug("URL: "+url)
+        logger.info("settings section: %s", self.get_section_url(url))
 
         data = self.get_request(url)
 

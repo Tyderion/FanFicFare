@@ -8,8 +8,8 @@
             "name": "CLI",
             "type": "debugpy",
             "request": "launch",
-            "preLaunchTask": "pipInstall",
-            "program": "fanficfare/cli.py",
+            "preLaunchTask": "removeEpubs",
+            "program": "-m fanficfare.cli",
             "console": "integratedTerminal",
             "args": "www.royalroad.com/fiction/81633/a-dragons-guide-to-school-rewrite --config C:\\Users\\Archie\\.config\\fanficfare\\dev.ini --debug --begin 1 --end 1 --update-epub-always"
         },
@@ -17,8 +17,8 @@
             "name": "CLI2",
             "type": "debugpy",
             "request": "launch",
-            "preLaunchTask": "pipInstall",
-            "program": "fanficfare/cli.py",
+            "preLaunchTask": "removeEpubs",
+            "program": "-m fanficfare.cli",
             "console": "integratedTerminal",
             "args": "https://www.royalroad.com/fiction/81632/power-at-any-cost --config C:\\Users\\Archie\\.config\\fanficfare\\dev.ini --debug --begin 1 --end 1 --update-epub-always"
         },
@@ -27,7 +27,7 @@
             "type": "debugpy",
             "request": "launch",
             "preLaunchTask": "removeEpubs",
-            "program": "fanficfare/cli.py",
+            "program": "-m fanficfare.cli",
             "console": "integratedTerminal",
             "args": "https://www.royalroad.com/fiction/42441 --config C:\\Users\\Archie\\.config\\fanficfare\\dev.ini --debug --begin 872 --end 872 --update-epub-always"
         }

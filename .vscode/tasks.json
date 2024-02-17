@@ -13,6 +13,17 @@
             "label": "removeEpubs",
             "type": "shell",
             "command": "rm -Force *.epub"
+        },
+        {
+            "label": "removeBuiltPlugin",
+            "type": "shell",
+            "command": "rm -Force FanFicFare.zip"
+        },
+        {
+            "label": "makePlugin",
+            "type": "shell",
+            "command": "python makeplugin.py",
+            "dependsOn": "removeBuiltPlugin"
         }
     ]
 }

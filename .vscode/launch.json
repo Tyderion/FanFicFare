@@ -39,6 +39,15 @@
             "program": "-m fanficfare.cli",
             "console": "integratedTerminal",
             "args": "https://www.royalroad.com/fiction/42441 --config C:\\Users\\Archie\\.config\\fanficfare\\dev.ini --debug --begin 872 --end 872 --update-epub-always"
+        },
+        {
+            "name": "CLI Moons",
+            "type": "debugpy",
+            "request": "launch",
+            "preLaunchTask": "removeEpubs",
+            "program": "-m fanficfare.cli",
+            "console": "integratedTerminal",
+            "args": "https://www.royalroad.com/fiction/36299/beneath-the-dragoneye-moons --config C:\\Users\\Archie\\.config\\fanficfare\\dev.ini --debug --begin 19 --end 19 --update-epub-always"
         }
     ]
 }

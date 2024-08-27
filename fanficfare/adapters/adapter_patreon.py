@@ -23,88 +23,146 @@ import re
 from .. import exceptions as exceptions
 from ..dateutils import parse_relative_date_string
 from ..htmlcleanup import stripHTML
+from enum import Enum
 
 from .base_adapter import BaseSiteAdapter
 
 logger = logging.getLogger(__name__)
 
 
+class LinkTypes(Enum):
+    COLLECTION = ("collection",)
+    CREATOR = ("creator",)
+    POST = "post"
+
+
+class Metadata(Enum):
+    LINKTYPE = ("linktype",)
+    ID = "id"
+
+
 def getClass():
     return RoyalRoadAdapter
+
 
 # Class name has to be unique.  Our convention is camel case the
 # sitename with Adapter at the end.  www is skipped.
 class RoyalRoadAdapter(BaseSiteAdapter):
+    url_regex = "".join(
+        [
+            line.strip()
+            for line in r"""
+        ^https?:\/\/(?:www\.|)patreon?\.com\/
+        (?:
+                (?:collection\/(\d+))
+            |
+                (?:posts\/(?:[a-zA-Z-]*(\d+)))
+            |
+                (?:([A-Za-z_]+)(?:\/posts)?)
+        ).*$
+    """
+        ]
+    )
 
     def __init__(self, config, url):
         BaseSiteAdapter.__init__(self, config, url)
 
-        self.username = "NoneGiven" # if left empty, site doesn't return any message at all.
+        self.username = (
+            "NoneGiven"  # if left empty, site doesn't return any message at all.
+        )
         self.password = ""
-        self.is_adult=False
+        self.is_adult = False
 
-        # get storyId from url--url validation guarantees query is only fiction/1234
-        # self.story.setMetadata('storyId',re.match(r'/fiction/(\d+)(/.*)?$',self.parsedUrl.path).groups()[0])
+        matched = re.match(self.url_regex, self.url)
 
+        # Group 3 => collection Id
+        if matched.group(1) is not None:
+            self.story.setMetadata(Metadata.ID, matched.group(1))
+            self.story.setMetadata(Metadata.LINKTYPE, LinkTypes.COLLECTION)
+
+        # Group 3 => collection Id
+        if matched.group(2) is not None:
+            self.story.setMetadata(Metadata.ID, matched.group(2))
+            self.story.setMetadata(Metadata.LINKTYPE, LinkTypes.POST)
+
+        # Group 5 => creator Id
+        elif matched.group(3) is not None:
+            self.story.setMetadata(Metadata.ID, matched.group(5))
+            self.story.setMetadata(Metadata.LINKTYPE, LinkTypes.CREATOR)
+        else:
+            self.story.setMetadata(Metadata.LINKTYPE, None)
+
+        print(self.parsedUrl.path)
+        print(self.url)
 
         # normalized story URL.
-        self._setURL('https://' + self.getSiteDomain() + '/fiction/'+self.story.getMetadata('storyId'))
+        if self.story.getMetadata(Metadata.LINKTYPE) == LinkTypes.COLLECTION:
+            self._setURL(
+                "https://"
+                + self.getSiteDomain()
+                + "/collection/"
+                + self.story.getMetadata("id")
+            )
+        elif self.story.getMetadata(Metadata.LINKTYPE) == LinkTypes.CREATOR:
+            self._setURL(
+                "https://" + self.getSiteDomain() + "/" + self.story.getMetadata("id")
+            )
 
         # Each adapter needs to have a unique site abbreviation.
-        self.story.setMetadata('siteabbrev','rylrdl')
+        self.story.setMetadata("siteabbrev", "ptrn")
 
         # The date format will vary from site to site.
         # http://docs.python.org/library/datetime.html#strftime-strptime-behavior
-        self.dateformat = '%d/%m/%Y %H:%M:%S %p'
+        self.dateformat = "%d/%m/%Y %H:%M:%S %p"
 
         # RR has globally unique ID for each chapter which can be used for fast lookup
-        self.chapterURLIndex = {}
+        self.postIdIndex = {}
 
-        if self.needs_login():
-            self.login(self.getConfig("username"), self.getConfig("password"))
+        # if self.needs_login():
+        #     self.login(self.getConfig("username"), self.getConfig("password"))
 
     def make_date(self, parenttag):
         # locale dates differ but the timestamp is easily converted
-        timetag = parenttag.find('time')
-        if timetag.has_attr('unixtime'):
-            ts = timetag['unixtime']
+        timetag = parenttag.find("time")
+        if timetag.has_attr("unixtime"):
+            ts = timetag["unixtime"]
             return datetime.fromtimestamp(float(ts))
         else:
             ## site has gone to crappy resolution "XX
             ## (min/day/month/year/etc) ago" dating
             return parse_relative_date_string(timetag.text)
 
-    @staticmethod # must be @staticmethod, don't remove it.
+    @staticmethod  # must be @staticmethod, don't remove it.
     def getSiteDomain():
         # The site domain.  Does have www here, if it uses it.
-        return 'www.patreon.com'
+        return "www.patreon.com"
 
     @classmethod
     def getAcceptDomains(cls):
-        return ['patreon.com']
+        return ["patreon.com"]
 
     @classmethod
     def getConfigSections(cls):
         "Only needs to be overriden if has additional ini sections."
-        return ['patreon.com',cls.getSiteDomain()]
+        return ["patreon.com", cls.getSiteDomain(), "https://www.patreon.com"]
 
     @classmethod
     def getSiteExampleURLs(cls):
-        return "https://www.patreon.com/collection/123 https://www.patreon.com/creator_name/posts"
+        return "https://www.patreon.com/collection/123 https://www.patreon.com/creator_name/posts https://www.patreon.com/creator_name"
 
     @classmethod
-    def get_section_url(cls,url):
+    def get_section_url(cls, url):
         ## minimal URL used for section names in INI and reject list
         ## for comparison
         # logger.debug("pre--url:%s"%url)
         # https://www.royalroad.com/fiction/36051/memories-of-the-fall
         # https://www.royalroad.com/fiction/36051
-        url = re.sub(r'^https?://(.*/fiction/\d+).*$',r'https://\1',url)
+        # url = re.sub(r'^https?://(.*/fiction/\d+).*$',r'https://\1',url)
         # logger.debug("post-url:%s"%url)
         return url
 
     def getSiteURLPattern(self):
-        return "https?"+re.escape("://")+r"(www\.|)royalroadl?\.com/fiction/\d+(/.*)?$"
+        return self.url_regex
 
     ## RR chapter URL only requires the chapter ID number field to be correct, story ID and title values are ignored
     ## URL format after the domain /fiction/ is long form, storyID/storyTitle/chapter/chapterID/chapterTitle
@@ -112,32 +170,40 @@ class RoyalRoadAdapter(BaseSiteAdapter):
     ## The regex matches both, and is valid if either there are both storyID/storyTitle and chapterTitle fields
     ##    or if there are neither of those two fields
     ## In addition, the chapterID must be found in chapterURLIndex table that is built when the ToC metadata is read.
-    def normalize_chapterurl(self,url):
+    def normalize_chapterurl(self, url):
         chap_pattern = r"https?://(?:www\.)?royalroadl?\.com/fiction(/\d+/[^/]+)?/chapter/(\d+)(/[^/]+)?/?$"
         match = re.match(chap_pattern, url)
-        if match and ((match.group(1) and match.group(3)) or (not match.group(1) and not match.group(3))):
+        if match and (
+            (match.group(1) and match.group(3))
+            or (not match.group(1) and not match.group(3))
+        ):
             chapter_url_index = self.chapterURLIndex.get(match.group(2))
             if chapter_url_index is not None:
-                return self.chapterUrls[chapter_url_index]['url']
+                return self.chapterUrls[chapter_url_index]["url"]
         return url
 
     def login(self, username, password):
-        loginUrl = f'https://{self.getSiteDomain()}/account/login'
-        logger.info("Will now login to URL (%s) as (%s)" %
-                    (loginUrl, username))
+        loginUrl = f"https://{self.getSiteDomain()}/account/login"
+        logger.info("Will now login to URL (%s) as (%s)" % (loginUrl, username))
 
-        d = self.post_request(loginUrl, {
-            'Email': username,
-            'Password': password,
-        })
+        d = self.post_request(
+            loginUrl,
+            {
+                "Email": username,
+                "Password": password,
+            },
+        )
 
         soup = self.make_soup(d)
         if not self.is_logged_in(soup):
             logger.warning("could not login")
 
     def needs_login(self, soup=None):
-        if self.hasConfig('username') and self.hasConfig('password') and (
-                soup is None or not self.is_logged_in(soup)):
+        if (
+            self.hasConfig("username")
+            and self.hasConfig("password")
+            and (soup is None or not self.is_logged_in(soup))
+        ):
             return True
         return False
 
@@ -149,12 +215,13 @@ class RoyalRoadAdapter(BaseSiteAdapter):
         soup = super(RoyalRoadAdapter, self).make_soup(data)
         # Parse and store styles in a set
         self.styles_to_ignore = set()
-        style_elements = soup.find_all('style')
+        style_elements = soup.find_all("style")
         for style_element in style_elements:
             class_matches = re.findall(
-                r'\.(\S+)\s*\{[^\}]*display\s*:\s*none\s*;[^\}]*\}',
+                r"\.(\S+)\s*\{[^\}]*display\s*:\s*none\s*;[^\}]*\}",
                 style_element.string,
-                flags=re.IGNORECASE)
+                flags=re.IGNORECASE,
+            )
             if class_matches:
                 self.styles_to_ignore.update(class_matches)
                 del class_matches
@@ -162,24 +229,24 @@ class RoyalRoadAdapter(BaseSiteAdapter):
         return soup
 
     def handle_spoilers(self, topsoup):
-        '''
+        """
         Modifies tag given as required to do spoiler changes.
-        '''
-        if self.getConfig('remove_spoilers'):
-            for div in topsoup.find_all('div', class_='spoiler'):
+        """
+        if self.getConfig("remove_spoilers"):
+            for div in topsoup.find_all("div", class_="spoiler"):
                 div.extract()
-        elif self.getConfig('legend_spoilers'):
-            for div in topsoup.find_all('div', class_='spoiler'):
-                div.name = 'fieldset'
-                legend = topsoup.new_tag('legend')
-                smalltext = div.find('div', class_='smalltext')
+        elif self.getConfig("legend_spoilers"):
+            for div in topsoup.find_all("div", class_="spoiler"):
+                div.name = "fieldset"
+                legend = topsoup.new_tag("legend")
+                smalltext = div.find("div", class_="smalltext")
                 if smalltext:
                     legend.string = stripHTML(smalltext)
                     smalltext.extract()
                 div.insert(0, legend)
-                for inner in div.find_all('div', class_='spoiler-inner'):
-                    del inner['style']
-                #div.button.extract()
+                for inner in div.find_all("div", class_="spoiler-inner"):
+                    del inner["style"]
+                # div.button.extract()
 
     ## Getting the chapter list and the meta data, plus 'is adult' checking.
     def extractChapterUrlsAndMetadata(self):
@@ -198,115 +265,118 @@ class RoyalRoadAdapter(BaseSiteAdapter):
 
         # site has taken to presenting a *page* that says 404 while
         # still returning an HTTP 200 code.
-        div404 = soup.find('div', {'class': 'number'})
-        if div404 and stripHTML(div404) == '404':
+        div404 = soup.find("div", {"class": "number"})
+        if div404 and stripHTML(div404) == "404":
             raise exceptions.StoryDoesNotExist(self.url)
 
         ## Title
-        title = soup.select_one('.fic-header h1').text
-        self.story.setMetadata('title', title)
+        title = soup.select_one(".fic-header h1").text
+        self.story.setMetadata("title", title)
 
         # Find authorid and URL from... author url.
-        mt_card_social = soup.find(None, {'class': 'mt-card-social'})
-        author_link = mt_card_social('a')[-1]
+        mt_card_social = soup.find(None, {"class": "mt-card-social"})
+        author_link = mt_card_social("a")[-1]
         if author_link:
-            authorId = author_link['href'].rsplit('/', 1)[1]
-            self.story.setMetadata('authorId', authorId)
+            authorId = author_link["href"].rsplit("/", 1)[1]
+            self.story.setMetadata("authorId", authorId)
             self.story.setMetadata(
-                'authorUrl',
-                'https://' + self.host + '/user/profile/' + authorId)
+                "authorUrl", "https://" + self.host + "/user/profile/" + authorId
+            )
 
         self.story.setMetadata(
-            'author',
-            soup.find(attrs=dict(property="books:author"))['content'])
+            "author", soup.find(attrs=dict(property="books:author"))["content"]
+        )
 
-        chapters = soup.find('table', {'id': 'chapters'}).find('tbody')
-        tds = [tr.findAll('td') for tr in chapters.findAll('tr')]
+        chapters = soup.find("table", {"id": "chapters"}).find("tbody")
+        tds = [tr.findAll("td") for tr in chapters.findAll("tr")]
 
         if not tds:
-            raise exceptions.FailedToDownload("Story has no chapters: %s" %
-                                              url)
+            raise exceptions.FailedToDownload("Story has no chapters: %s" % url)
 
         # Links in the RR ToC page are in the normalized long form, so match is simpler than in normalize_chapterurl()
         chap_pattern_long = r"https?://(?:www\.)?royalroadl?\.com/fiction/\d+/[^/]+/chapter/(\d+)/[^/]+/?$"
         for chapter, date in tds:
-            chapterUrl = 'https://' + self.getSiteDomain() + chapter.a['href']
+            chapterUrl = "https://" + self.getSiteDomain() + chapter.a["href"]
             chapterDate = self.make_date(date)
             format = self.getConfig(
                 "datechapter_format",
-                self.getConfig("datePublished_format", self.dateformat))
-            if self.add_chapter(chapter.text, chapterUrl,
-                                {'date': chapterDate.strftime(format)}):
+                self.getConfig("datePublished_format", self.dateformat),
+            )
+            if self.add_chapter(
+                chapter.text, chapterUrl, {"date": chapterDate.strftime(format)}
+            ):
                 match = re.match(chap_pattern_long, chapterUrl)
                 if match:
                     chapter_id = match.group(1)
-                    self.chapterURLIndex[chapter_id] = len(
-                        self.chapterUrls) - 1
+                    self.chapterURLIndex[chapter_id] = len(self.chapterUrls) - 1
 
-        description = soup.select_one('div.description div.hidden-content')
+        description = soup.select_one("div.description div.hidden-content")
         self.setDescription(url, description)
 
-        self.story.setMetadata('dateUpdated', self.make_date(tds[-1][1]))
-        self.story.setMetadata('datePublished', self.make_date(tds[0][1]))
+        self.story.setMetadata("dateUpdated", self.make_date(tds[-1][1]))
+        self.story.setMetadata("datePublished", self.make_date(tds[0][1]))
 
         for a in soup.find_all(
-                'a', {'class': 'fiction-tag'}):  # not all stories have genre
+            "a", {"class": "fiction-tag"}
+        ):  # not all stories have genre
             genre = stripHTML(a)
             if not "Unspecified" in genre:
-                self.story.addToList('genre', genre)
+                self.story.addToList("genre", genre)
 
-        for label in [
-                stripHTML(a) for a in soup.find_all('span', {'class': 'label'})
-        ]:
-            if 'COMPLETED' == label:
-                self.story.setMetadata('status', 'Completed')
-            elif 'ONGOING' == label:
-                self.story.setMetadata('status', 'In-Progress')
-            elif 'HIATUS' == label:
-                self.story.setMetadata('status', 'Hiatus')
-            elif 'STUB' == label:
-                self.story.setMetadata('status', 'Stub')
-            elif 'DROPPED' == label:
-                self.story.setMetadata('status', 'Dropped')
-            elif 'Fan Fiction' == label:
-                self.story.addToList('category', 'FanFiction')
-            elif 'Original' == label:
-                self.story.addToList('category', 'Original')
+        for label in [stripHTML(a) for a in soup.find_all("span", {"class": "label"})]:
+            if "COMPLETED" == label:
+                self.story.setMetadata("status", "Completed")
+            elif "ONGOING" == label:
+                self.story.setMetadata("status", "In-Progress")
+            elif "HIATUS" == label:
+                self.story.setMetadata("status", "Hiatus")
+            elif "STUB" == label:
+                self.story.setMetadata("status", "Stub")
+            elif "DROPPED" == label:
+                self.story.setMetadata("status", "Dropped")
+            elif "Fan Fiction" == label:
+                self.story.addToList("category", "FanFiction")
+            elif "Original" == label:
+                self.story.addToList("category", "Original")
 
         # 'rating' in FFF speak means G, PG, Teen, Restricted, etc.
         # 'stars' is used instead for RR's 1-5 stars rating.
-        stars = soup.find(attrs=dict(property="books:rating:value"))['content']
-        self.story.setMetadata('stars', stars)
-        logger.debug("stars:(%s)" % self.story.getMetadata('stars'))
+        stars = soup.find(attrs=dict(property="books:rating:value"))["content"]
+        self.story.setMetadata("stars", stars)
+        logger.debug("stars:(%s)" % self.story.getMetadata("stars"))
 
-        warning = soup.find('strong', string='Warning')
+        warning = soup.find("strong", string="Warning")
         if warning != None:
-            for li in warning.find_next('ul').find_all('li'):
-                self.story.addToList('warnings', stripHTML(li))
+            for li in warning.find_next("ul").find_all("li"):
+                self.story.addToList("warnings", stripHTML(li))
 
         # get cover
-        img = soup.find(None, {'class': 'row fic-header'}).find('img')
+        img = soup.find(None, {"class": "row fic-header"}).find("img")
         if img:
-            cover_url = img['src']
+            cover_url = img["src"]
             # usually URL is for thumbnail. Try expected URL for larger image, if fails fall back to the original URL
-            if self.setCoverImage(
-                    url,
-                    cover_url.replace('/covers-full/',
-                                      '/covers-large/'))[0] == "failedtoload":
+            if (
+                self.setCoverImage(
+                    url, cover_url.replace("/covers-full/", "/covers-large/")
+                )[0]
+                == "failedtoload"
+            ):
                 self.setCoverImage(url, cover_url)
                 # some content is show as tables, this will preserve them
 
-        itag = soup.find('i',title='Story Length')
-        if itag and itag.has_attr('data-content'):
+        itag = soup.find("i", title="Story Length")
+        if itag and itag.has_attr("data-content"):
             # "calculated from 139,112 words"
-            m = re.search(r"calculated from (?P<words>[0-9,]+) words",itag['data-content'])
+            m = re.search(
+                r"calculated from (?P<words>[0-9,]+) words", itag["data-content"]
+            )
             if m:
-                self.story.setMetadata('numWords',m.group('words'))
+                self.story.setMetadata("numWords", m.group("words"))
 
     # grab the text for an individual chapter.
     def getChapterText(self, url):
 
-        logger.debug('Getting chapter text from: %s' % url)
+        logger.debug("Getting chapter text from: %s" % url)
 
         ## httplib max headers removed Jan 2021--not seeing it
         ## anymore, they probably fixed their site.  See
@@ -314,29 +384,32 @@ class RoyalRoadAdapter(BaseSiteAdapter):
         ## original details.
         soup = self.make_soup(self.get_request(url))
 
-        div = soup.find('div',{'class':"chapter-inner chapter-content"})
+        div = soup.find("div", {"class": "chapter-inner chapter-content"})
 
         # TODO: these stories often have tables in, but these wont render correctly
         # defaults.ini output CSS now outlines/pads the tables, at least.
 
         if None == div:
-            raise exceptions.FailedToDownload("Error downloading Chapter: %s!  Missing required element!" % url)
+            raise exceptions.FailedToDownload(
+                "Error downloading Chapter: %s!  Missing required element!" % url
+            )
 
-        if self.getConfig("include_author_notes",True):
+        if self.getConfig("include_author_notes", True):
             # collect both first, changing div for frontnote first
             # causes confusion in the tree.
-            frontnote = div.find_previous('div', {'class':'author-note-portlet'})
-            endnote = div.find_next('div', {'class':'author-note-portlet'})
+            frontnote = div.find_previous("div", {"class": "author-note-portlet"})
+            endnote = div.find_next("div", {"class": "author-note-portlet"})
             if frontnote:
                 # move frontnote into chapter text div.
-                div.insert(0,frontnote.extract())
+                div.insert(0, frontnote.extract())
             if endnote:
                 # move endnote into chapter text div.
                 div.append(endnote.extract())
+
         def has_display_none_style(tag):
-            tag_class = tag.get('class', '')
+            tag_class = tag.get("class", "")
             return any(style in tag_class for style in self.styles_to_ignore)
 
         for element in div.find_all(has_display_none_style):
             element.extract()
-        return self.utf8FromSoup(url,div)
+        return self.utf8FromSoup(url, div)

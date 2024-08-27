@@ -5,7 +5,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "CLI",
+            "name": "Royalroad 1",
             "type": "debugpy",
             "request": "launch",
             "preLaunchTask": "removeEpubs",
@@ -14,7 +14,7 @@
             "args": "www.royalroad.com/fiction/81633/a-dragons-guide-to-school-rewrite --config C:\\Users\\Archie\\.config\\fanficfare\\dev.ini --debug --begin 1 --end 1 --update-epub-always"
         },
         {
-            "name": "CLI2",
+            "name": "Royalroad 2",
             "type": "debugpy",
             "request": "launch",
             "preLaunchTask": "removeEpubs",
@@ -23,7 +23,7 @@
             "args": "https://www.royalroad.com/fiction/81667/auravampire --config C:\\Users\\Archie\\.config\\fanficfare\\dev.ini --debug --begin 1 --end 1 --update-epub-always"
         },
         {
-            "name": "CLI Read",
+            "name": "Royalroad Read",
             "type": "debugpy",
             "request": "launch",
             "preLaunchTask": "removeEpubs",
@@ -32,22 +32,14 @@
             "args": "https://www.royalroad.com/fiction/81632/power-at-any-cost --config C:\\Users\\Archie\\.config\\fanficfare\\dev.ini --debug --begin 1 --end 1 --update-epub-always"
         },
         {
-            "name": "CLI Elder",
+            "name": "Patreon Collection",
             "type": "debugpy",
             "request": "launch",
             "preLaunchTask": "removeEpubs",
             "program": "-m fanficfare.cli",
             "console": "integratedTerminal",
-            "args": "https://www.royalroad.com/fiction/42441 --config C:\\Users\\Archie\\.config\\fanficfare\\dev.ini --debug --begin 872 --end 872 --update-epub-always"
+            "args": "https://www.patreon.com/collection/480592?view=expanded --config dev.ini --debug --begin 1 --end 1 --update-epub-always"
         },
-        {
-            "name": "CLI Moons",
-            "type": "debugpy",
-            "request": "launch",
-            "preLaunchTask": "removeEpubs",
-            "program": "-m fanficfare.cli",
-            "console": "integratedTerminal",
-            "args": "https://www.royalroad.com/fiction/36299/beneath-the-dragoneye-moons --config C:\\Users\\Archie\\.config\\fanficfare\\dev.ini --debug --begin 19 --end 19 --update-epub-always"
-        }
+
     ]
 }

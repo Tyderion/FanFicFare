@@ -126,10 +126,15 @@ class RoyalRoadAdapter(BaseSiteAdapter):
         loginUrl = f'https://{self.getSiteDomain()}/account/login'
         logger.info("Will now login to URL (%s) as (%s)" %
                     (loginUrl, username))
+        
+        d = self.get_request(loginUrl)
+        soup = self.make_soup(d)
+        csrf = soup.find('input', {'name': '__RequestVerificationToken'})['value']
 
         d = self.post_request(loginUrl, {
             'Email': username,
             'Password': password,
+            '__RequestVerificationToken': csrf
         })
 
         soup = self.make_soup(d)

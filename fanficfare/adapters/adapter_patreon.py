@@ -35,11 +35,12 @@ class LinkTypes(Enum):
     CREATOR = ("creator",)
     POST = "post"
 
-
 class Metadata(Enum):
     LINKTYPE = ("linktype",)
     ID = "id"
 
+    def s(self):
+        return str(self)
 
 def getClass():
     return RoyalRoadAdapter
@@ -48,23 +49,29 @@ def getClass():
 # Class name has to be unique.  Our convention is camel case the
 # sitename with Adapter at the end.  www is skipped.
 class RoyalRoadAdapter(BaseSiteAdapter):
-    url_regex = "".join(
-        [
-            line.strip()
-            for line in r"""
+    raw_regex = r"""
         ^https?:\/\/(?:www\.|)patreon?\.com\/
         (?:
                 (?:collection\/(\d+))
-            |
+            | 
                 (?:posts\/(?:[a-zA-Z-]*(\d+)))
             |
                 (?:([A-Za-z_]+)(?:\/posts)?)
         ).*$
     """
+
+    # This is the regex for the URL of the site, we can't handle multiline regexes outside
+    url_regex = "".join(
+        [
+            line.strip()
+            for line in raw_regex.splitlines()
         ]
     )
+    data = {}
 
     def __init__(self, config, url):
+        import webbrowser
+
         BaseSiteAdapter.__init__(self, config, url)
 
         self.username = (
@@ -75,38 +82,41 @@ class RoyalRoadAdapter(BaseSiteAdapter):
 
         matched = re.match(self.url_regex, self.url)
 
-        # Group 3 => collection Id
+        # Group 1 => collection Id
         if matched.group(1) is not None:
-            self.story.setMetadata(Metadata.ID, matched.group(1))
-            self.story.setMetadata(Metadata.LINKTYPE, LinkTypes.COLLECTION)
+            self.data[Metadata.ID] = matched.group(1)
+            self.data[Metadata.LINKTYPE] = LinkTypes.COLLECTION
 
-        # Group 3 => collection Id
-        if matched.group(2) is not None:
-            self.story.setMetadata(Metadata.ID, matched.group(2))
-            self.story.setMetadata(Metadata.LINKTYPE, LinkTypes.POST)
+        # Group 2 => collection Id
+        elif matched.group(2) is not None:
+            self.data[Metadata.ID] = matched.group(2)
+            self.data[Metadata.LINKTYPE] = LinkTypes.POST
 
-        # Group 5 => creator Id
+        # Group 3 => creator Id
         elif matched.group(3) is not None:
-            self.story.setMetadata(Metadata.ID, matched.group(5))
-            self.story.setMetadata(Metadata.LINKTYPE, LinkTypes.CREATOR)
+            self.data[Metadata.ID] = matched.group(3)
+            self.data[Metadata.LINKTYPE] = LinkTypes.CREATOR
         else:
-            self.story.setMetadata(Metadata.LINKTYPE, None)
+            self.data[Metadata.ID] = None
+        
+        self.story.setMetadata('storyId', self.data[Metadata.ID]),
 
-        print(self.parsedUrl.path)
-        print(self.url)
-
+        print("original url: ", self.url)
+        linkType = self.data[Metadata.LINKTYPE]
         # normalized story URL.
-        if self.story.getMetadata(Metadata.LINKTYPE) == LinkTypes.COLLECTION:
-            self._setURL(
-                "https://"
-                + self.getSiteDomain()
-                + "/collection/"
-                + self.story.getMetadata("id")
-            )
-        elif self.story.getMetadata(Metadata.LINKTYPE) == LinkTypes.CREATOR:
-            self._setURL(
-                "https://" + self.getSiteDomain() + "/" + self.story.getMetadata("id")
-            )
+        if  linkType == LinkTypes.COLLECTION:
+            self._setURL(f'https://{self.getSiteDomain()}/collection/{self.data[Metadata.ID]}?view=condensed')
+        elif linkType == LinkTypes.CREATOR:
+            self._setURL(f'https://{self.getSiteDomain()}/{self.data[Metadata.ID]}')
+        elif linkType == LinkTypes.POST:
+            self._setURL(f'https://{self.getSiteDomain()}/posts/{self.data[Metadata.ID]}')
+        
+        print("normalized url: ", self.url)
+
+        url = "https://stackoverflow.com/questions/4216985/call-to-operating-system-to-open-url"
+
+        webbrowser.open(url, new=0, autoraise=True)
+        exit(1)
 
         # Each adapter needs to have a unique site abbreviation.
         self.story.setMetadata("siteabbrev", "ptrn")
@@ -119,7 +129,7 @@ class RoyalRoadAdapter(BaseSiteAdapter):
         self.postIdIndex = {}
 
         # if self.needs_login():
-        #     self.login(self.getConfig("username"), self.getConfig("password"))
+        self.login(self.getConfig("username"), self.getConfig("password"))
 
     def make_date(self, parenttag):
         # locale dates differ but the timestamp is easily converted
@@ -197,15 +207,9 @@ class RoyalRoadAdapter(BaseSiteAdapter):
         soup = self.make_soup(d)
         if not self.is_logged_in(soup):
             logger.warning("could not login")
-
-    def needs_login(self, soup=None):
-        if (
-            self.hasConfig("username")
-            and self.hasConfig("password")
-            and (soup is None or not self.is_logged_in(soup))
-        ):
-            return True
-        return False
+    
+    def before_get_urls_from_page(self, url, normalize):
+        print("before_get_urls_from_page")
 
     def is_logged_in(self, soup):
         username = soup.find("span", {"class": "username"})

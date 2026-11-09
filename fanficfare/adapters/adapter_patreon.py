@@ -20,6 +20,7 @@ import json
 import logging
 import re
 from datetime import datetime
+from urllib.parse import quote
 from xml.sax.saxutils import escape, quoteattr
 
 from .. import exceptions as exceptions
@@ -117,7 +118,7 @@ class PatreonAdapter(BaseSiteAdapter):
 
     def _filters(self):
         ## One creator can run several series, so each book narrows the
-        ## posts: {title, match, exclude, since}, all optional.  Hex-encoded
+        ## posts: {title, match, exclude, since, tag}, all optional.  Hex-encoded
         ## JSON because the CLI splits -o on '=', and a regex can hold one.
         encoded = self.getConfig('patreon_filter')
         if not encoded:
@@ -354,7 +355,8 @@ class PatreonAdapter(BaseSiteAdapter):
         self.story.setMetadata('status', 'In-Progress')
 
         # Newest first so 'since' can end the walk early; chapters read oldest-first.
-        posts = self._list_posts(self._posts_url(campaign_id, '-published_at'),
+        tag = '&filter[tag]=%s' % quote(filters['tag']) if filters.get('tag') else ''
+        posts = self._list_posts(self._posts_url(campaign_id, '-published_at', tag),
                                  stop_before=filters.get('since'))
         posts.reverse()
         self._add_chapters(posts)

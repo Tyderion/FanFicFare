@@ -210,6 +210,14 @@ def test_filters_all_apply_and_series_do_not_mix():
     assert titles(adapter) == ["Book A: Chapter 2", "Book A: Chapter 3"]
 
 
+def test_a_tag_is_passed_to_patreons_own_filter():
+    api = FakeApi([[post("1", "Chapter 1 - No story name here", 1)]])
+    adapter = make_adapter(CREATOR, api, {"title": "Aurora", "tag": "Story - Aurora"})
+    adapter.extractChapterUrlsAndMetadata()
+    assert titles(adapter) == ["Chapter 1 - No story name here"]
+    assert any("filter[tag]=Story%20-%20Aurora" in r for r in api.requests)
+
+
 def test_since_stops_the_walk_early():
     api = FakeApi([[post("3", "Three", 3), post("1", "One", 1)], [post("0", "Never fetched", 1)]])
     adapter = make_adapter(CREATOR, api, {"since": "2026-01-02"})

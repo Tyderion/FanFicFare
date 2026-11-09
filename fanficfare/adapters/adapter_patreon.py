@@ -29,6 +29,49 @@ from .base_adapter import BaseSiteAdapter
 logger = logging.getLogger(__name__)
 
 
+NUMBER_WORDS = dict(
+    one=1, two=2, three=3, four=4, five=5, six=6, seven=7, eight=8, nine=9, ten=10, eleven=11, twelve=12,
+    thirteen=13, fourteen=14, fifteen=15, sixteen=16, seventeen=17, eighteen=18, nineteen=19,
+    twenty=20, thirty=30, forty=40, fifty=50, sixty=60, seventy=70, eighty=80, ninety=90)
+_NUMBER_WORD = '|'.join(sorted(list(NUMBER_WORDS) + ['hundred'], key=len, reverse=True))
+# "Chapter 75", "Ch. 78-2", "Chapter Seventy-Five".  A word number never spans " - ",
+# so "Chapter Two - Three Dogs" stays chapter 2.
+CHAPTER_MARK = re.compile(r'\b(?:chapter|chap|ch)\b\.?\s*(\d+(?:[.-]\d+)*|(?:%s)(?:(?:-\s*|\s+)(?:%s))*)\b'
+                          % (_NUMBER_WORD, _NUMBER_WORD), re.IGNORECASE)
+# "Aura Overload 1.1", "Aura - 2.32": a section number after a name without digits.
+SECTION_MARK = re.compile(r'\D*?\b(\d+\.\d+)\b')
+SEPARATORS = ' -–—:.,'
+
+
+def _chapter_number(text):
+    if text[0].isdigit():
+        return text
+    total = 0
+    for word in re.findall(r'[a-z]+', text.lower()):
+        total = total * 100 if word == 'hundred' else total + NUMBER_WORDS[word]
+    return str(total)
+
+
+def short_chapter_title(title, book_title):
+    """'Chapter <n> - <name>' without the series prefix authors put on every
+    post, so a chapter list on a small screen shows what tells them apart."""
+    title = title.strip()
+    found = CHAPTER_MARK.search(title)
+    number = _chapter_number(found.group(1)) if found else None
+    if not found:
+        found = SECTION_MARK.match(title)
+        number = found.group(1) if found else None
+    if found:
+        name = title[found.end():].lstrip(SEPARATORS)
+        return 'Chapter %s - %s' % (number, name) if name else 'Chapter %s' % number
+
+    if book_title and title.lower().startswith(book_title.lower()):
+        rest = title[len(book_title):]
+        if rest[0:1] and rest[0] in SEPARATORS and rest.lstrip(SEPARATORS):
+            return rest.lstrip(SEPARATORS)
+    return title
+
+
 def getClass():
     return PatreonAdapter
 
@@ -217,7 +260,8 @@ class PatreonAdapter(BaseSiteAdapter):
                 dates.append(published)
                 chaptermeta['date'] = published.strftime(datefmt)
             # Not attrs['url']: its slug follows the title, and chapters are keyed by URL.
-            self.add_chapter(attrs.get('title') or ('Post %s' % post['id']),
+            self.add_chapter(short_chapter_title(attrs.get('title') or ('Post %s' % post['id']),
+                                                 self.story.getMetadata('title')),
                              'https://%s/posts/%s' % (self.getSiteDomain(), post['id']),
                              chaptermeta)
         if dates:

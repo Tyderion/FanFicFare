@@ -4,7 +4,7 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 
 from fanficfare import exceptions
-from fanficfare.adapters.adapter_patreon import PatreonAdapter
+from fanficfare.adapters.adapter_patreon import PatreonAdapter, short_chapter_title
 from fanficfare.configurable import Configuration
 
 DOMAIN = "https://www.patreon.com"
@@ -207,7 +207,8 @@ def test_filters_all_apply_and_series_do_not_mix():
     ]
     adapter = make_adapter(CREATOR, FakeApi([posts]), {"match": "^book a", "exclude": "announcement", "since": "2026-01-03"})
     adapter.extractChapterUrlsAndMetadata()
-    assert titles(adapter) == ["Book A: Chapter 2", "Book A: Chapter 3"]
+    assert titles(adapter) == ["Chapter 2", "Chapter 3"]
+    assert [c["url"].rsplit("/", 1)[1] for c in adapter.get_chapters()] == ["3", "6"]
 
 
 def test_a_tag_is_passed_to_patreons_own_filter():
@@ -263,3 +264,36 @@ def test_chapter_text_comes_from_the_listing_without_another_request():
     count = len(api.requests)
     assert "Body of 1" in adapter.getChapterText(DOMAIN + "/posts/1")
     assert len(api.requests) == count
+
+
+@pytest.mark.parametrize("raw, book, expected", [
+    ("Black Apron - Max Level Archmaid - Chapter Seventy-Five - The Chosen Path", "Black Apron", "Chapter 75 - The Chosen Path"),
+    ("Black Apron - - Max Level Archmaid - Chapter Two - False", "Black Apron", "Chapter 2 - False"),
+    ("Black Apron - Max Level Archmaid - Chapter Sixty- Six - On-y Off-y", "Black Apron", "Chapter 66 - On-y Off-y"),
+    ("Black Apron - Max Level Archmaid", "Black Apron", "Max Level Archmaid"),
+    ("Throne of Time: Chapter 1", "Throne of Time", "Chapter 1"),
+    ("Throne of Time - Chapter 75: Unexpected Foundations", "Throne of Time", "Chapter 75 - Unexpected Foundations"),
+    ("Throne of Time - Chapter 78-2: The Sequences of the Library", "Throne of Time", "Chapter 78-2 - The Sequences of the Library"),
+    ("Gifted - Chapter 71 ", "Gifted", "Chapter 71"),
+    ("Gifted - Chapter 120.1", "Gifted", "Chapter 120.1"),
+    ("Aura Overload 1.1 - A New Skin", "Aura Overload", "Chapter 1.1 - A New Skin"),
+    ("Aura 1.57 - Following the Trail", "Aura Overload", "Chapter 1.57 - Following the Trail"),
+    ("Aura Overload - 2.32 Tempting Fate", "Aura Overload", "Chapter 2.32 - Tempting Fate"),
+    ("Aurora of the Rainbow Rings - Prologue", "Aurora of the Rainbow Rings", "Prologue"),
+    ("Chapter 1 - Reincarnation", "Aurora of the Rainbow Rings", "Chapter 1 - Reincarnation"),
+    ("Chapter Two - Three Dogs", "X", "Chapter 2 - Three Dogs"),
+    ("Chapter One Hundred Five - Late", "X", "Chapter 105 - Late"),
+    ("Bonus Chapter - Beach Day", "X", "Bonus Chapter - Beach Day"),
+    ("Aura Overload's Thursday Update", "Aura Overload", "Aura Overload's Thursday Update"),
+    ("Aura Overload", "Aura Overload", "Aura Overload"),
+    ("Some Ordinary Title", "", "Some Ordinary Title"),
+])
+def test_short_chapter_title(raw, book, expected):
+    assert short_chapter_title(raw, book) == expected
+
+
+def test_chapters_get_short_titles_but_filters_see_the_full_one():
+    posts = [post("2", "Other Series - Chapter 1", 2), post("1", "My Book - Chapter 1 - Start", 1)]
+    adapter = make_adapter(CREATOR, FakeApi([posts]), {"title": "My Book", "match": "^My Book"})
+    adapter.extractChapterUrlsAndMetadata()
+    assert titles(adapter) == ["Chapter 1 - Start"]

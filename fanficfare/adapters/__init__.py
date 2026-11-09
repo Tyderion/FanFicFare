@@ -139,6 +139,7 @@ from . import adapter_touchfluffytail
 from . import adapter_spiritfanfictioncom
 from . import adapter_superlove
 from . import adapter_cfaa
+from . import adapter_patreon
 from . import adapter_althistorycom
 from . import adapter_pmdfanfiction
 from . import adapter_sofurrycom

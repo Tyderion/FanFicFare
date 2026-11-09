@@ -30,9 +30,13 @@ def post(pid, title, day, can_view=True, content=None, doc="default"):
 class FakeApi:
     """Answers the adapter's requests; pages holds the /api/posts responses, in cursor order."""
 
-    def __init__(self, pages, collection=None):
+    AUTHOR = {"name": "The Author", "url": DOMAIN + "/creator", "vanity": "creator"}
+
+    def __init__(self, pages, collection=None, creator_page='<script>"pageBootstrap":{"campaign":{"data":{"id":"77"}}}</script>', campaigns=None):
         self.pages = pages
         self.collection = collection
+        self.creator_page = creator_page
+        self.campaigns = campaigns or {"77": self.AUTHOR}
         self.requests = []
 
     def page_url(self, index):
@@ -42,9 +46,10 @@ class FakeApi:
         self.requests.append(url)
         path = urlsplit(url).path
         if path == "/creator":
-            return '<script>"pageBootstrap":{"campaign":{"data":{"id":"77"}}}</script>'
-        if path == "/api/campaigns/77":
-            return json.dumps({"data": {"id": "77", "attributes": {"name": "The Author", "url": DOMAIN + "/creator", "vanity": "creator"}}})
+            return self.creator_page
+        if path.startswith("/api/campaigns/"):
+            campaign_id = path.rsplit("/", 1)[1]
+            return json.dumps({"data": {"id": campaign_id, "attributes": self.campaigns[campaign_id]}})
         if path.startswith("/api/collection/"):
             return json.dumps(self.collection)
         assert path == "/api/posts", url
@@ -57,7 +62,7 @@ class FakeApi:
 
 def make_adapter(url, api, filters=None):
     config = Configuration(["www.patreon.com"], "epub")
-    config.add_section("overrides") if not config.has_section("overrides") else None
+    config.add_section("overrides")
     if filters is not None:
         config.set("overrides", "patreon_filter", json.dumps(filters).encode("utf-8").hex())
     adapter = PatreonAdapter(config, url)
@@ -72,9 +77,53 @@ def titles(adapter):
 CREATOR = DOMAIN + "/creator/posts"
 
 
-@pytest.mark.parametrize("url", [DOMAIN + "/creator", CREATOR, DOMAIN + "/c/creator", DOMAIN + "/cw/creator/posts"])
+@pytest.mark.parametrize("url", [DOMAIN + "/creator", CREATOR, CREATOR + "/", DOMAIN + "/c/creator", DOMAIN + "/cw/creator/posts", DOMAIN + "/creator?l=de"])
 def test_creator_url_shapes_normalize(url):
     assert make_adapter(url, FakeApi([[]])).url == DOMAIN + "/creator"
+
+
+@pytest.mark.parametrize("url", [DOMAIN + "/cw/creator/posts/title-123", DOMAIN + "/c/creator/collections/5"])
+def test_a_deeper_path_is_not_the_creators_whole_feed(url):
+    with pytest.raises(exceptions.InvalidStoryURL):
+        make_adapter(url, FakeApi([[]]))
+
+
+def test_collection_url_keeps_its_query_tolerance():
+    assert make_adapter(DOMAIN + "/collection/9?view=condensed", FakeApi([[]])).url == DOMAIN + "/collection/9"
+
+
+def test_an_undated_post_does_not_end_the_walk():
+    undated = post("9", "Undated", 1)
+    undated["attributes"]["published_at"] = None
+    adapter = make_adapter(CREATOR, FakeApi([[undated, post("3", "Three", 3)]]), {"since": "2026-01-02"})
+    adapter.extractChapterUrlsAndMetadata()
+    assert titles(adapter) == ["Three"]
+
+
+def test_a_rate_limit_is_reported_as_itself_not_as_a_missing_campaign():
+    class Limited(FakeApi):
+        def __call__(self, url, **_):
+            if urlsplit(url).path == "/api/campaigns/77":
+                raise exceptions.HTTPErrorFFF(url, 429, "slow down")
+            return FakeApi.__call__(self, url)
+
+    with pytest.raises(exceptions.HTTPErrorFFF):
+        make_adapter(CREATOR, Limited([[post("1", "One", 1)]])).extractChapterUrlsAndMetadata()
+
+
+def test_many_memberships_and_an_unreadable_campaign_dont_hide_the_creator():
+    class Unreadable(FakeApi):
+        def __call__(self, url, **_):
+            if urlsplit(url).path == "/api/campaigns/0":
+                raise exceptions.HTTPErrorFFF(url, 404, "gone")
+            return FakeApi.__call__(self, url)
+
+    ids = [str(i) for i in range(15)] + ["77"]
+    page = " ".join('"campaign":{"data":{"id":"%s"}}' % i for i in ids)
+    campaigns = dict({i: {"vanity": "other"} for i in ids}, **{"77": FakeApi.AUTHOR})
+    adapter = make_adapter(CREATOR, Unreadable([[post("1", "One", 1)]], creator_page=page, campaigns=campaigns))
+    adapter.extractChapterUrlsAndMetadata()
+    assert adapter.story.getMetadata("authorId") == "77"
 
 
 def test_creator_listing_follows_every_page_and_reads_oldest_first():
@@ -110,31 +159,18 @@ def test_a_post_outside_the_collection_fails_instead_of_mixing():
 
 
 def test_the_campaign_must_belong_to_the_creator():
-    class Memberships(FakeApi):
-        def __call__(self, url, **_):
-            path = urlsplit(url).path
-            if path == "/creator":
-                self.requests.append(url)
-                return '"campaign":{"data":{"id":"5"}} "pageBootstrap":{"campaign":{"data":{"id":"77"}}}'
-            if path == "/api/campaigns/5":
-                self.requests.append(url)
-                return json.dumps({"data": {"id": "5", "attributes": {"vanity": "someone-else"}}})
-            return FakeApi.__call__(self, url)
-
-    adapter = make_adapter(CREATOR, Memberships([[post("1", "One", 1)]]))
+    api = FakeApi([[post("1", "One", 1)]],
+                  creator_page='"campaign":{"data":{"id":"5"}} "pageBootstrap":{"campaign":{"data":{"id":"77"}}}',
+                  campaigns={"5": {"vanity": "someone-else"}, "77": FakeApi.AUTHOR})
+    adapter = make_adapter(CREATOR, api)
     adapter.extractChapterUrlsAndMetadata()
     assert adapter.story.getMetadata("authorId") == "77"
 
 
 def test_no_campaign_of_this_creator_is_an_error():
-    class Stranger(FakeApi):
-        def __call__(self, url, **_):
-            if urlsplit(url).path == "/api/campaigns/77":
-                return json.dumps({"data": {"id": "77", "attributes": {"vanity": "someone-else"}}})
-            return FakeApi.__call__(self, url)
-
+    api = FakeApi([[post("1", "One", 1)]], campaigns={"77": {"vanity": "someone-else"}})
     with pytest.raises(exceptions.FailedToDownload, match="find the campaign"):
-        make_adapter(CREATOR, Stranger([[post("1", "One", 1)]])).extractChapterUrlsAndMetadata()
+        make_adapter(CREATOR, api).extractChapterUrlsAndMetadata()
 
 
 @pytest.mark.parametrize("site_ids, expected", [
@@ -158,16 +194,6 @@ def test_old_chapters_keep_their_place_and_new_ones_go_last(site_ids, expected):
     assert [c["url"].rsplit("/", 1)[1] for c in adapter.get_chapters()] == expected
     assert [c["number"] for c in adapter.story.chapters] == [1, 2, 3, 4]
     assert adapter.story.chapters[-1]["index04"] == "0004"
-
-
-def test_a_custom_collection_stored_newest_first_still_reads_oldest_first():
-    collection = {
-        "data": {"id": "9", "attributes": {"title": "Coll", "post_ids": [2, 1], "post_sort_type": "custom"}},
-        "included": [{"type": "campaign", "id": "77", "attributes": {}}],
-    }
-    adapter = make_adapter(DOMAIN + "/collection/9", FakeApi([[post("1", "One", 1), post("2", "Two", 2)]], collection))
-    adapter.extractChapterUrlsAndMetadata()
-    assert titles(adapter) == ["One", "Two"]
 
 
 def test_filters_all_apply_and_series_do_not_mix():

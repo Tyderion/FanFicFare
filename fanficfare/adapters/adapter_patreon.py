@@ -20,24 +20,12 @@ import json
 import logging
 import re
 from datetime import datetime
-from enum import Enum
 from xml.sax.saxutils import escape, quoteattr
 
 from .. import exceptions as exceptions
 from .base_adapter import BaseSiteAdapter
 
 logger = logging.getLogger(__name__)
-
-
-class LinkTypes(Enum):
-    COLLECTION = "collection"
-    CREATOR = "creator"
-    POST = "post"
-
-
-class Metadata(Enum):
-    LINKTYPE = "linktype"
-    ID = "id"
 
 
 def getClass():
@@ -47,24 +35,18 @@ def getClass():
 # Class name has to be unique.  Our convention is camel case the
 # sitename with Adapter at the end.  www is skipped.
 class PatreonAdapter(BaseSiteAdapter):
-    ## Patreon URLs come in three shapes that map to our three link types:
-    ##   /collection/<id>                     -> COLLECTION (group 1)
-    ##   [<creator>/]posts/<slug>-<id>        -> POST       (group 2)
-    ##   [c/|cw/]<creator>[/posts]            -> CREATOR    (group 3)
-    raw_regex = r"""
-        ^https?:\/\/(?:www\.)?patreon\.com\/
-        (?:
-                (?:collection\/(\d+))
-            |
-                (?:(?:[\w-]+\/)?posts\/(?:[\w-]+-)?(\d+))
-            |
-                (?:(?:cw?\/)?([A-Za-z0-9_-]+)(?:\/posts)?)
-        ).*$
-    """
+    ## Patreon URLs come in three shapes, one capture group each.
+    url_regex = (r"^https?://(?:www\.)?patreon\.com/(?:"
+                 r"(?:collection/(\d+).*)"                     # /collection/<id>
+                 r"|(?:(?:[\w-]+/)?posts/(?:[\w-]+-)?(\d+).*)" # [<creator>/]posts/<slug>-<id>
+                 # [c/|cw/]<creator>[/posts], and nothing deeper: a longer path isn't the whole feed.
+                 r"|(?:(?:cw?/)?([A-Za-z0-9_-]+)(?:/posts)?/?(?:[?#].*)?)"
+                 r")$")
 
-    # The regex engine here can't handle multiline/verbose regexes, so
-    # flatten it into a single line.
-    url_regex = "".join(line.strip() for line in raw_regex.splitlines())
+    # ProseMirror spells names in both snake_case and camelCase; these keys are folded.
+    BLOCK_TAGS = {'blockquote': 'blockquote', 'bulletlist': 'ul', 'orderedlist': 'ol', 'listitem': 'li'}
+    MARK_TAGS = {'bold': 'b', 'strong': 'b', 'italic': 'i', 'em': 'i', 'underline': 'u',
+                 'strike': 's', 'strikethrough': 's', 'code': 'code'}
 
     # JSON-API query suffix shared by all api calls.
     API_VERSION = "json-api-version=1.0&json-api-use-default-includes=false"
@@ -78,38 +60,19 @@ class PatreonAdapter(BaseSiteAdapter):
     def __init__(self, config, url):
         BaseSiteAdapter.__init__(self, config, url)
 
-        self.data = {}
         # post id -> body html, filled while listing.
         self.post_bodies = {}
 
-        matched = re.match(self.url_regex, self.url)
-
-        # Group 1 => collection id
-        if matched.group(1) is not None:
-            self.data[Metadata.ID] = matched.group(1)
-            self.data[Metadata.LINKTYPE] = LinkTypes.COLLECTION
-        # Group 2 => post id
-        elif matched.group(2) is not None:
-            self.data[Metadata.ID] = matched.group(2)
-            self.data[Metadata.LINKTYPE] = LinkTypes.POST
-        # Group 3 => creator (vanity) name
-        elif matched.group(3) is not None:
-            self.data[Metadata.ID] = matched.group(3)
-            self.data[Metadata.LINKTYPE] = LinkTypes.CREATOR
+        collection_id, post_id, vanity = re.match(self.url_regex, self.url).groups()
+        if collection_id:
+            self.link_id, self.extract, path = collection_id, self._extract_collection, 'collection/' + collection_id
+        elif post_id:
+            self.link_id, self.extract, path = post_id, self._extract_post, 'posts/' + post_id
         else:
-            self.data[Metadata.ID] = None
-            self.data[Metadata.LINKTYPE] = None
+            self.link_id, self.extract, path = vanity, self._extract_creator, vanity
 
-        self.story.setMetadata('storyId', self.data[Metadata.ID])
-
-        # normalized story URL.
-        linktype = self.data[Metadata.LINKTYPE]
-        if linktype == LinkTypes.COLLECTION:
-            self._setURL('https://%s/collection/%s' % (self.getSiteDomain(), self.data[Metadata.ID]))
-        elif linktype == LinkTypes.CREATOR:
-            self._setURL('https://%s/%s' % (self.getSiteDomain(), self.data[Metadata.ID]))
-        elif linktype == LinkTypes.POST:
-            self._setURL('https://%s/posts/%s' % (self.getSiteDomain(), self.data[Metadata.ID]))
+        self.story.setMetadata('storyId', self.link_id)
+        self._setURL('https://%s/%s' % (self.getSiteDomain(), path))
         logger.debug("normalized url: %s", self.url)
 
         # Each adapter needs to have a unique site abbreviation.
@@ -129,15 +92,6 @@ class PatreonAdapter(BaseSiteAdapter):
     def getSiteDomain():
         # The site domain.  Does have www here, if it uses it.
         return "www.patreon.com"
-
-    @classmethod
-    def getAcceptDomains(cls):
-        return ["patreon.com"]
-
-    @classmethod
-    def getConfigSections(cls):
-        "Only needs to be overriden if has additional ini sections."
-        return ["patreon.com", cls.getSiteDomain(), "https://www.patreon.com"]
 
     @classmethod
     def getSiteExampleURLs(cls):
@@ -160,12 +114,6 @@ class PatreonAdapter(BaseSiteAdapter):
         except ValueError:
             raise exceptions.FailedToDownload(
                 "Patreon API returned non-JSON for %s" % api_url)
-
-    @staticmethod
-    def _post_id_from_url(url):
-        "Pull the trailing numeric post id out of a Patreon post URL."
-        m = re.search(r'(\d+)(?:[/?#].*)?$', url)
-        return m.group(1) if m else None
 
     def _filters(self):
         ## One creator can run several series, so each book narrows the
@@ -200,7 +148,7 @@ class PatreonAdapter(BaseSiteAdapter):
             response = self._api_get(url)
             for post in response.get('data', []):
                 published = post.get('attributes', {}).get('published_at') or ''
-                if stop_before and published[:10] < stop_before:
+                if stop_before and published and published[:10] < stop_before:
                     return posts
                 posts.append(post)
             url = (response.get('links') or {}).get('next')
@@ -296,24 +244,22 @@ class PatreonAdapter(BaseSiteAdapter):
     ## ------------------------------------------------------------------
 
     def extractChapterUrlsAndMetadata(self):
-        linktype = self.data[Metadata.LINKTYPE]
-        if linktype == LinkTypes.COLLECTION:
-            self._extract_collection()
-        elif linktype == LinkTypes.POST:
-            self._extract_post()
-        elif linktype == LinkTypes.CREATOR:
-            self._extract_creator()
-        else:
-            raise exceptions.FailedToDownload(
-                "Unrecognized Patreon URL: %s" % self.url)
+        self.extract()
 
     def _resolve_campaign(self, vanity, page):
         ## The first id on the page need not be this creator's: a logged-in
         ## page can also carry the account's memberships.  Another campaign
         ## here would fill the book with someone else's posts.
-        for campaign_id in list(dict.fromkeys(re.findall(self.CAMPAIGN_ID_RE, page)))[:10]:
-            campaign = self._api_get('https://%s/api/campaigns/%s?%s&fields[campaign]=name,url,vanity'
-                                     % (self.getSiteDomain(), campaign_id, self.API_VERSION))
+        for campaign_id in dict.fromkeys(re.findall(self.CAMPAIGN_ID_RE, page)):
+            try:
+                campaign = self._api_get('https://%s/api/campaigns/%s?%s&fields[campaign]=name,url,vanity'
+                                         % (self.getSiteDomain(), campaign_id, self.API_VERSION))
+            except exceptions.HTTPErrorFFF as e:
+                # Gone or private is another campaign's problem; a rate limit or outage is ours.
+                if e.status_code not in (403, 404):
+                    raise
+                logger.debug("Patreon: campaign %s not readable: %s", campaign_id, e)
+                continue
             attrs = campaign.get('data', {}).get('attributes', {})
             if (attrs.get('vanity') or '').lower() == vanity.lower():
                 return campaign_id, attrs
@@ -335,23 +281,16 @@ class PatreonAdapter(BaseSiteAdapter):
             chapter['index04'] = chapter['index'] = '%04d' % (i + 1)
 
     def _extract_collection(self):
-        collection_id = self.data[Metadata.ID]
+        collection_id = self.link_id
         ## One trimmed request returns the collection, its members
         ## (post_ids) and the owning campaign.
-        api_url = (
+        response = self._api_get((
             'https://%s/api/collection/%s?%s'
             '&include=posts.campaign'
-            '&fields[post]=title,url,published_at,current_user_can_view'
+            '&fields[post]=title'
             '&fields[campaign]=name,url,vanity'
             '&fields[collection]=title,description,post_ids,thumbnail'
-        ) % (self.getSiteDomain(), collection_id, self.API_VERSION)
-
-        try:
-            response = self._api_get(api_url)
-        except exceptions.HTTPErrorFFF as e:
-            if e.status_code == 404:
-                raise exceptions.StoryDoesNotExist(self.url)
-            raise
+        ) % (self.getSiteDomain(), collection_id, self.API_VERSION))
 
         collection = response.get('data', {})
         attrs = collection.get('attributes', {})
@@ -365,17 +304,12 @@ class PatreonAdapter(BaseSiteAdapter):
         thumbnail = (attrs.get('thumbnail') or {}).get('url')
 
         # The campaign is the 'author' of the collection.
-        campaigns = [x for x in included if x.get('type') == 'campaign']
-        if campaigns:
-            campaign_id = campaigns[0].get('id')
-            self._set_author(campaign_id, campaigns[0].get('attributes', {}))
-        else:
-            self.story.setMetadata('author', 'Patreon')
-            found = re.search(r'/campaign/(\d+)', thumbnail or '')
-            if not found:
-                raise exceptions.FailedToDownload(
-                    "Couldn't find the campaign of Patreon collection: %s" % self.url)
-            campaign_id = found.group(1)
+        campaign = next((x for x in included if x.get('type') == 'campaign'), {})
+        campaign_id = campaign.get('id')
+        if not campaign_id:
+            raise exceptions.FailedToDownload(
+                "Couldn't find the campaign of Patreon collection: %s" % self.url)
+        self._set_author(campaign_id, campaign.get('attributes', {}))
 
         if attrs.get('description'):
             self.setDescription(self.url, attrs['description'])
@@ -410,13 +344,8 @@ class PatreonAdapter(BaseSiteAdapter):
             "use a /collection/<id> URL: %s" % self.url)
 
     def _extract_creator(self):
-        vanity = self.data[Metadata.ID]
-        try:
-            page = self.get_request('https://%s/%s' % (self.getSiteDomain(), vanity))
-        except exceptions.HTTPErrorFFF as e:
-            if e.status_code == 404:
-                raise exceptions.StoryDoesNotExist(self.url)
-            raise
+        vanity = self.link_id
+        page = self.get_request('https://%s/%s' % (self.getSiteDomain(), vanity))
         campaign_id, attrs = self._resolve_campaign(vanity, page)
         self._set_author(campaign_id, attrs)
 
@@ -437,15 +366,8 @@ class PatreonAdapter(BaseSiteAdapter):
     def getChapterText(self, url):
         logger.debug("Getting chapter text from: %s", url)
 
-        post_id = self._post_id_from_url(url)
-        if not post_id:
-            raise exceptions.FailedToDownload(
-                "Couldn't find a post id in chapter URL: %s" % url)
-
-        body = self.post_bodies.get(post_id)
-        if body is None:
-            raise exceptions.FailedToDownload(
-                "Patreon post wasn't in the listing: %s" % url)
+        # Chapter URLs are always .../posts/<id>; see _add_chapters.
+        body = self.post_bodies[url.rsplit('/', 1)[-1]]
 
         soup = self.make_soup('<div class="patreon-post">%s</div>' % body)
         return self.utf8FromSoup(url, soup.find('div'))
@@ -455,7 +377,7 @@ class PatreonAdapter(BaseSiteAdapter):
     ## ------------------------------------------------------------------
 
     def _prosemirror_to_html(self, node):
-        node_type = node.get('type')
+        node_type = (node.get('type') or '').replace('_', '').lower()
         children = node.get('content') or []
         inner = ''.join(self._prosemirror_to_html(child) for child in children)
 
@@ -468,19 +390,13 @@ class PatreonAdapter(BaseSiteAdapter):
             return '<h%d>%s</h%d>' % (level, inner, level)
         if node_type == 'text':
             return self._apply_marks(node.get('text', ''), node.get('marks') or [])
-        if node_type in ('hard_break', 'hardBreak'):
+        if node_type == 'hardbreak':
             return '<br/>'
-        if node_type in ('horizontal_rule', 'horizontalRule'):
+        if node_type == 'horizontalrule':
             return '<hr/>'
-        if node_type == 'blockquote':
-            return '<blockquote>%s</blockquote>' % inner
-        if node_type in ('bullet_list', 'bulletList'):
-            return '<ul>%s</ul>' % inner
-        if node_type in ('ordered_list', 'orderedList'):
-            return '<ol>%s</ol>' % inner
-        if node_type in ('list_item', 'listItem'):
-            return '<li>%s</li>' % inner
-        if node_type in ('code_block', 'codeBlock'):
+        if node_type in self.BLOCK_TAGS:
+            return '<%s>%s</%s>' % (self.BLOCK_TAGS[node_type], inner, self.BLOCK_TAGS[node_type])
+        if node_type == 'codeblock':
             return '<pre><code>%s</code></pre>' % inner
         if node_type == 'image':
             src = node.get('attrs', {}).get('src')
@@ -490,21 +406,12 @@ class PatreonAdapter(BaseSiteAdapter):
         logger.debug("Patreon: unhandled prosemirror node type %r", node_type)
         return inner
 
-    @staticmethod
-    def _apply_marks(text, marks):
+    def _apply_marks(self, text, marks):
         out = escape(text)
         for mark in marks:
-            mark_type = mark.get('type')
-            if mark_type in ('bold', 'strong'):
-                out = '<b>%s</b>' % out
-            elif mark_type in ('italic', 'em'):
-                out = '<i>%s</i>' % out
-            elif mark_type == 'underline':
-                out = '<u>%s</u>' % out
-            elif mark_type in ('strike', 'strikethrough', 'strikeThrough'):
-                out = '<s>%s</s>' % out
-            elif mark_type == 'code':
-                out = '<code>%s</code>' % out
+            mark_type = (mark.get('type') or '').lower()
+            if mark_type in self.MARK_TAGS:
+                out = '<%s>%s</%s>' % (self.MARK_TAGS[mark_type], out, self.MARK_TAGS[mark_type])
             elif mark_type == 'link':
                 href = mark.get('attrs', {}).get('href')
                 if href:
